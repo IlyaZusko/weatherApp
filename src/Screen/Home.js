@@ -1,25 +1,57 @@
-import React, {useEffect, useCallback, useState} from 'react'
-import { StyleSheet, View, Text, Image, Platform, FlatList, ImageBackground, Button, ScrollView } from 'react-native'
+import React, { useEffect, useState } from 'react';
+import { StyleSheet, View, Text, Platform, FlatList, ImageBackground } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import * as FileSystem from 'expo-file-system';
-import BackgroundImage from '../../assets/img/background.png'
-import { useNavigation } from '@react-navigation/native';
-import { FORECAST_ONEDAY_WEATHER_API_URI, BASE_FILE_NAME } from '../Constants/Constants.js'
 import moment from 'moment';
 
+// Constants
+import { FORECAST_ONEDAY_WEATHER_API_URI } from '../Constants/Constants.js';
 
-// Import Icons
+// Navigation
+import { useNavigation } from '@react-navigation/native';
+
+// Images
+import BackgroundImage from '../../assets/img/background.png'
+
+// Icons
 import { Feather } from '@expo/vector-icons';
 
 
 export default function Home() {
 
+    // States
     const [isReady, setIsReady] = useState(false);
+    const [weatherData, setWeatherData] = useState([]);
 
-    const PATH_TO_FILE = FileSystem.documentDirectory + 'weatherData.json';
-    const navigation = useNavigation();
+    // Local Constants
+    const PATH_TO_FILE_WITH_WEATHER_DATA = FileSystem.documentDirectory + 'weatherData.json';
+    const NAVIGATION = useNavigation();
+    const CALCULATING_STATUSBAR_HEIGHT = Platform.OS === 'ios' ? 45 : StatusBar.currentHeight;
 
-    const [weatherData, setWeatherData] = useState([])
+    // The function of initial data loading when opening the application
+    useEffect(() => {
+        handleWriteFile();
+        handleReadFile();
+    }, []);
+
+    // Updating weather data files every 5 minutes of using the app 
+    useEffect(() => {
+        const interval = setInterval(() => {
+            handleWriteFile();
+            handleReadFile();
+        }, 300000);
+
+        return () => clearInterval(interval);
+    }, []);
+
+    // Getting data for rendering components from a file every time there is a transition to the screen
+    useEffect(() => {
+        const unsubscribe = NAVIGATION.addListener('focus', () => {
+            handleReadFile();
+        });
+
+        return unsubscribe;
+    }, [NAVIGATION]);
 
 
     const date = new Date();
@@ -27,68 +59,39 @@ export default function Home() {
     const monthName = date.toLocaleString('default', { month: 'long', timeZone: 'UTC' });
     const dayOfWeek = new Intl.DateTimeFormat('en-US', { weekday: 'long' }).format(date);
 
+    // The function of getting data from the API and writing it to a local file
     const handleWriteFile = async () => {
         try {
             fetch(`${FORECAST_ONEDAY_WEATHER_API_URI}`)
             .then((response) => response.json())
             .then((data) => {
-                FileSystem.writeAsStringAsync(PATH_TO_FILE, JSON.stringify(data))
-                .catch((error) => {
-                    console.error(error);
-                });
+                FileSystem.writeAsStringAsync(PATH_TO_FILE_WITH_WEATHER_DATA, JSON.stringify(data));
             })
             .catch((error) => {
                 console.error(error);
             });
         } catch(err) {
-            console.log(err)
+            console.log(err);
         } 
     }
 
-    const readFile = async () => {
-        const fileContents = await FileSystem.readAsStringAsync(PATH_TO_FILE);
-        setWeatherData(JSON.parse(fileContents))
-        setIsReady(true)
+    // Data and local file reading function
+    const handleReadFile = async () => {
+        const fileContents = await FileSystem.readAsStringAsync(PATH_TO_FILE_WITH_WEATHER_DATA);
+        setWeatherData(JSON.parse(fileContents));
+        setIsReady(true);
     }
 
-    useEffect(() => {
-        handleWriteFile()
-        readFile()
-        console.log('Монтирование ')
-      }, [])
-
-    useEffect(() => {
-        console.log('Монтирование с таймаутом')
-        const interval = setInterval(() => {
-            handleWriteFile()
-            readFile()
-        }, 60000);
-        return () => clearInterval(interval);
-      }, []);
-
-
-
-
-
-    useEffect(() => {
-        const unsubscribe = navigation.addListener('focus', () => {
-          readFile()
-          console.log('DATA:   ', weatherData)
-        });
-    
-        return unsubscribe;
-      }, [navigation]);
-
-    const STATUSBAR_HEIGHT = Platform.OS === 'ios' ? 45 : StatusBar.currentHeight;
-
-    const Block = ({hour, isDay, temp}) => {
-        const date = moment(`${hour}`, 'YYYY-MM-DD HH:mm').format('h A');
+    // Components
+    const WeatherByHourComponent = ({currentTime, isDayOrNight, temperature}) => {
+        // Converting a string time value to AM/PM format
+        const date = moment(`${currentTime}`, 'YYYY-MM-DD HH:mm').format('h A');
 
         return (
         <View style={style.weatherHoursInfoContainer} >
             <Text style={style.weatherHoursInfoTime}>{date}</Text>
-            {isDay === 0 ? <Feather name="moon" size={24} color="#FFFFFF" /> : <Feather name="sun" size={24} color="#FFFFFF" />}
-            <Text style={style.weatherHoursInfoTemp}>{temp}°C</Text>
+            {isDayOrNight === 0 ? <Feather name="moon" size={24} color="#FFFFFF" /> : <Feather name="sun" size={24} color="#FFFFFF" />}
+            <Text style={style.weatherHoursInfoTemp}>{temperature}°C</Text>
         </View>
     )};
 
@@ -96,14 +99,13 @@ export default function Home() {
         <View style={{ width: 26 }} />
     );
 
-    // const WEATHER_BY_HOUR_DATA = weatherData.forecast.forecastday[0].hour
-
+    // Checking for loading data for rendering
     if (!isReady) {
         return null;
-      }
+    }
 
     return (
-        <View style={[style.contentWrapper, {paddingTop: STATUSBAR_HEIGHT}]}>
+        <View style={[style.contentWrapper, {paddingTop: CALCULATING_STATUSBAR_HEIGHT}]}>
             <View style={style.wrapper}>
                 <View style={style.imgContainer}>
                     <ImageBackground source={BackgroundImage} resizeMode='cover' style={style.imgBackground}>
@@ -140,7 +142,9 @@ export default function Home() {
                 </View>
                 <FlatList
                     data={weatherData.forecast.forecastday[0].hour}
-                    renderItem={({item, index}) => <Block temp={item.temp_c} isDay={item.is_day} hour={item.time} />}
+                    renderItem={({item, index}) => 
+                        <WeatherByHourComponent temperature={item.temp_c} isDayOrNight={item.is_day} currentTime={item.time} />
+                    }
                     keyExtractor={(_, i) => i.toString()}
                     horizontal
                     showsHorizontalScrollIndicator={false}
@@ -244,7 +248,7 @@ const style = StyleSheet.create({
         display: 'flex',
         justifyContent: 'center',
         alignItems: 'center',
-        gap: 3
+        gap: 5
     },
     weatherHoursInfoTime: {
         fontFamily: 'nun-med',
@@ -255,7 +259,7 @@ const style = StyleSheet.create({
     weatherHoursInfoTemp: {
         fontFamily: 'nun-sem',
         color: '#FFFFFF',
-        marginTop: 4,
+        marginTop: 6,
         fontSize: 14,
         
     },
